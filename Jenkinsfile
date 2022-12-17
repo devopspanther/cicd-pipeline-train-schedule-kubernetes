@@ -1,52 +1,46 @@
 pipeline {
+   tools {
+        maven 'Maven3'
+    }
     agent any
     environment {
-        //be sure to replace "willbla" with your own Docker Hub username
-        DOCKER_IMAGE_NAME = "willbla/train-schedule"
+        registry = "406187633378.dkr.ecr.us-east-2.amazonaws.com/docker-repo"
     }
+   
     stages {
-        stage('Build') {
+        stage ('Build') {
             steps {
-                echo 'Running build automation'
-                sh './gradlew build --no-daemon'
-                archiveArtifacts artifacts: 'dist/trainSchedule.zip'
+                sh 'mvn clean install'           
+                }
+        }
+        // Building Docker images
+        stage('Building image') {
+        steps{
+            script {
+            dockerImage = docker.build registry 
             }
         }
-        stage('Build Docker Image') {
-            when {
-                branch 'master'
+        }
+   
+        // Uploading Docker images into AWS ECR
+        stage('Pushing to ECR') {
+        steps{  
+            script {
+                    sh 'aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 406187633378.dkr.ecr.us-east-2.amazonaws.com'
+                    sh 'docker push 406187633378.dkr.ecr.us-east-2.amazonaws.com/docker-repo:1.0'
             }
-            steps {
+            }
+        }
+        
+        stage('K8S Deploy') {
+            steps{   
                 script {
-                    app = docker.build(DOCKER_IMAGE_NAME)
-                    app.inside {
-                        sh 'echo Hello, World!'
+                    withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'K8S', namespace: '', serverUrl: '') {
+                    sh ('kubectl apply -f  eks-deploy-k8s.yaml')
                     }
                 }
             }
         }
-        stage('Push Docker Image') {
-            when {
-                branch 'master'
-            }
-            steps {
-                script {
-                    docker.withRegistry('https://registry.hub.docker.com', 'docker_hub_login') {
-                        app.push("${env.BUILD_NUMBER}")
-                        app.push("latest")
-                    }
-                }
-            }
-        }
-        stage('DeployToProduction') {
-            when {
-                branch 'master'
-            }
-            steps {
-                input 'Deploy to Production?'
-                milestone(1)
-                //implement Kubernetes deployment here
-            }
-        }
+
     }
 }
